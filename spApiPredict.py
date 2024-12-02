@@ -10,6 +10,11 @@ import os
 os.environ["FLASK_SKIP_DOTENV"] = "1"
 app = Flask(__name__)
 
+atr = 3
+rsi =3
+roc = 3
+sma10 = 5
+sma50 = 10
 
 # Função para carregar o modelo do arquivo ZIP
 def load_model_from_zip(ticker, zip_path="models.zip"):
@@ -61,11 +66,11 @@ def get_data_from_yfinance(ticker, start_date="2000-01-01"):
     df['Date'] = df['Date'].dt.tz_localize(None)  # Remover timezone
 
     # Calcular indicadores técnicos
-    df['RSI'] = calculate_rsi(df['Close'], window=3)
-    df['SMA10'] = df['Close'].rolling(window=5).mean()
-    df['SMA50'] = df['Close'].rolling(window=10).mean()
-    df['ROC10'] = calculate_roc(df['Close'], window=3)
-    df['ATR'] = calculate_atr(df['High'], df['Low'], df['Close'], window=3)
+    df['RSI'] = calculate_rsi(df['Close'], window=rsi)
+    df['SMA10'] = df['Close'].rolling(window=sma10).mean()
+    df['SMA50'] = df['Close'].rolling(window=sma50).mean()
+    df['ROC10'] = calculate_roc(df['Close'], window=roc)
+    df['ATR'] = calculate_atr(df['High'], df['Low'], df['Close'], window=atr)
 
     # Substituir valores NaN gerados pelos cálculos
     df.fillna(0, inplace=True)
