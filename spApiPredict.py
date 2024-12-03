@@ -7,27 +7,44 @@ from tensorflow.keras.models import load_model
 from sklearn.preprocessing import MinMaxScaler
 import datetime
 import os
+import time
+import psutil
 os.environ["FLASK_SKIP_DOTENV"] = "1"
 app = Flask(__name__)
 
+
+
 atr = 3
-rsi =3
+rsi = 3
 roc = 3
 sma10 = 5
 sma50 = 10
 
 # Função para carregar o modelo do arquivo ZIP
+
+
 def load_model_from_zip(ticker, zip_path="models.zip"):
     model_filename = f"lstm_{ticker}.h5"
     with zipfile.ZipFile(zip_path, 'r') as z:
         if model_filename in z.namelist():
             z.extract(model_filename)  # Extrai o modelo temporariamente
-            model = load_model(model_filename)  # Carrega o modelo
+            try:
+                model = load_model(model_filename)  # Tenta carregar diretamente
+            except ValueError as e:
+                if "Unrecognized keyword arguments: ['batch_shape']" in str(e):
+                    # Corrige o modelo ajustando a entrada
+                    old_model = load_model(model_filename, compile=False)
+                    input_shape = old_model.input_shape[1:]  # Ignorar batch_size
+                    inputs = Input(shape=input_shape)  # Nova entrada sem batch_shape
+                    outputs = old_model(inputs)
+                    model = Model(inputs=inputs, outputs=outputs)
+                    model.compile(optimizer=old_model.optimizer, loss=old_model.loss)
+                else:
+                    raise e
             os.remove(model_filename)  # Remove o modelo extraído após carregar
             return model
         else:
             raise FileNotFoundError(f"Modelo para o ticker {ticker} não encontrado no arquivo {zip_path}.")
-
 
 # Função para calcular o RSI
 def calculate_rsi(data, window=14):
@@ -80,7 +97,8 @@ def get_data_from_yfinance(ticker, start_date="2000-01-01"):
 # Função para normalizar os dados
 def normalize_data(df):
     scaler = MinMaxScaler()
-    columns_to_scale = ['Open', 'Close', 'High', 'Low', 'Volume', 'RSI', 'SMA10', 'SMA50', 'ROC10', 'ATR']
+    columns_to_scale = ['Open', 'Close', 'High', 'Low',
+                        'Volume', 'RSI', 'SMA10', 'SMA50', 'ROC10', 'ATR']
     df[columns_to_scale] = scaler.fit_transform(df[columns_to_scale])
     return df, scaler
 
@@ -101,7 +119,8 @@ def get_data_for_ticker(ticker, date=None, sequence_length=4):
         # Obter o índice da data selecionada
         index = df[df['Date'] == date].index
         if index.empty:
-            raise ValueError(f"Data {date} não encontrada para o ticker {ticker}.")
+            raise ValueError(
+                f"Data {date} não encontrada para o ticker {ticker}.")
 
         # Verificar se há dados suficientes antes da data para criar a sequência
         index = index[0]
@@ -123,8 +142,24 @@ def get_data_for_ticker(ticker, date=None, sequence_length=4):
     sequence = np.expand_dims(sequence, axis=0)
     return sequence, scaler
 
+# Medir tempo de resposta adicional
+
+
+@app.before_request
+def start_timer():
+    request.start_time = time.time()
+
+
+@app.after_request
+def log_response_time(response):
+    if hasattr(request, 'start_time'):
+        duration = time.time() - request.start_time
+        app.logger.info(f"Path: {request.path}, Status: {response.status_code}, Time: {duration:.2f}s")
+    return response
 
 # Rota para prever o próximo preço
+
+
 @app.route('/predict', methods=['POST'])
 def predict_next_price():
     try:
@@ -151,7 +186,8 @@ def predict_next_price():
 
         # Reverter a normalização para o preço original
         dummy_data = np.zeros((1, len(sequence[0][0])))
-        dummy_data[0, 1] = predicted_scaled  # A posição 1 corresponde a 'Close'
+        # A posição 1 corresponde a 'Close'
+        dummy_data[0, 1] = predicted_scaled
         predicted_price = scaler.inverse_transform(dummy_data)[0][1]
 
         # Calcular a data D+1
@@ -170,6 +206,13 @@ def predict_next_price():
         })
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+
+@app.route('/health', methods=['GET'])
+def health_check():
+    cpu_usage = psutil.cpu_percent(interval=1)
+    memory_info = psutil.virtual_memory()
+    return jsonify({"cpu_usage": f"{cpu_usage}%", "memory_available": f"{memory_info.available / (1024 * 1024):.2f} MB"})
 
 
 # Executar a API
